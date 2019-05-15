@@ -87,21 +87,21 @@ VOID WINAPI EventRecordCallback(
     if (dwError != ERROR_INSUFFICIENT_BUFFER)
     {
         wprintf(L"Failed to get event information: %#x\n", dwError);
-        return;
+        goto Exit;
     }
 
     pTraceEventInfo = (PTRACE_EVENT_INFO)malloc(dwTraceEventInfoSize);
     if (pTraceEventInfo == NULL)
     {
         wprintf(L"Failed to allocate memory for event info: %#x\n", ERROR_OUTOFMEMORY);
-        return;
+        goto Exit;
     }
 
     dwError = TdhGetEventInformation(pEventRecord, 0, NULL, pTraceEventInfo, &dwTraceEventInfoSize);
     if (dwError != ERROR_SUCCESS)
     {
         wprintf(L"Failed to get event information: %#x\n", dwError);
-        return;
+        goto Exit;
     }
 
     //
@@ -111,7 +111,7 @@ VOID WINAPI EventRecordCallback(
     if (pTraceEventInfo->EventDescriptor.Id != DNS_CACHED_RESOLUTION_EVENT_ID &&
         pTraceEventInfo->EventDescriptor.Id != DNS_HOT_RESOLUTION_EVENT_ID)
     {
-        return;
+        goto Exit;
     }
 
     //
@@ -136,11 +136,11 @@ VOID WINAPI EventRecordCallback(
 
     if (pTraceEventInfo->EventDescriptor.Id == DNS_CACHED_RESOLUTION_EVENT_ID)
     {
-        wprintf(L"[Cache  ] ");
+        wprintf(L"[Cache  ]");
     }
     else
     {
-        wprintf(L"[Network] ");
+        wprintf(L"[Network]");
     }
 
     //
@@ -149,16 +149,17 @@ VOID WINAPI EventRecordCallback(
 
     for (DWORD i = 0; i < pTraceEventInfo->TopLevelPropertyCount; i++)
     {
+        if (pPropertyData != NULL)
+        {
+            free(pPropertyData);
+            pPropertyData = NULL;
+        }
+
         pEventPropertyInfo = &pTraceEventInfo->EventPropertyInfoArray[i];
         pszPropertyName = (PWSTR)((PBYTE)pTraceEventInfo + pEventPropertyInfo->NameOffset);
 
-#if DBG
-        wprintf(L"\tPropertyName: %ws, Length: %d, InType: %u, Data: ",
-                pszPropertyName,
-                pEventPropertyInfo->length,
-                pEventPropertyInfo->nonStructType.InType);
-#else
-        if (wcscmp(pszPropertyName, L"QueryName") != 0)
+        if (wcscmp(pszPropertyName, L"QueryName") != 0 &&
+            wcscmp(pszPropertyName, L"QueryType") != 0)
         {
             //
             // Only show queried domain names
@@ -166,7 +167,6 @@ VOID WINAPI EventRecordCallback(
 
             continue;
         }
-#endif
        
         PropertyDataDesc.PropertyName = (ULONGLONG)pszPropertyName;
         PropertyDataDesc.ArrayIndex = ULONG_MAX;
@@ -203,18 +203,51 @@ VOID WINAPI EventRecordCallback(
             continue;
         }
 
-        if (pEventPropertyInfo->nonStructType.InType == TDH_INTYPE_UNICODESTRING)
+        switch (pEventPropertyInfo->nonStructType.InType)
         {
-            wprintf(L"%ws\n", (PWSTR)pPropertyData);
+        case TDH_INTYPE_UNICODESTRING:
+
+            wprintf(L" %ws", (PWSTR)pPropertyData);
+            break;
+
+        case TDH_INTYPE_UINT32:
+
+            if (wcscmp(pszPropertyName, L"QueryType") == 0 &&
+                (*(PULONG)pPropertyData == 1 || *(PULONG)pPropertyData == 28))
+            {
+                wprintf(L"%ws", *(PULONG)pPropertyData == 1 ? L" (A)" : L" (AAAA)");
+                break;
+            }
+
+            wprintf(L" (%d)", *(PULONG)pPropertyData);
+            break;
+
+        case TDH_INTYPE_UINT64:
+
+            wprintf(L" (%lld)", *(PULONGLONG)pPropertyData);
+            break;
+
+        default:
+
+            wprintf(L" UNKNOWN");
+            break;
         }
-        else if (pEventPropertyInfo->nonStructType.InType == TDH_INTYPE_UINT32)
-        {
-            wprintf(L"%d\n", *(PULONG)pPropertyData);
-        }
-        else if (pEventPropertyInfo->nonStructType.InType == TDH_INTYPE_UINT64)
-        {
-            wprintf(L"%lld\n", *(PULONGLONG)pPropertyData);
-        }
+    }
+
+    wprintf(L"\n");
+
+Exit:
+
+    if (pPropertyData != NULL)
+    {
+        free(pPropertyData);
+        pPropertyData = NULL;
+    }
+
+    if (pTraceEventInfo != NULL)
+    {
+        free(pTraceEventInfo);
+        pTraceEventInfo = NULL;
     }
 }
 
